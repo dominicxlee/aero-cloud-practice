@@ -7,7 +7,7 @@ export class AeroCloudPracticeStack extends cdk.Stack {
     super(scope, id, props);
 
     const flightFunction = new lambda.Function(this, 'FlightStatusFunction', {
-      description: 'Returns the current status of an airport flight',
+      description: 'Returns the current status of an airport flight for airport operations',
       runtime: lambda.Runtime.NODEJS_22_X,
       handler: 'index.handler',
       code: lambda.Code.fromInline(`
