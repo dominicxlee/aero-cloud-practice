@@ -1,17 +1,40 @@
-// import * as cdk from 'aws-cdk-lib/core';
-// import { Template } from 'aws-cdk-lib/assertions';
-// import * as AeroCloudPractice from '../lib/aero-cloud-practice-stack';
+import * as cdk from "aws-cdk-lib";
+import { Template } from "aws-cdk-lib/assertions";
+import { AeroCloudPracticeStack } from "../lib/aero-cloud-practice-stack";
 
-// example test. To run these tests, uncomment this file along with the
-// example resource in lib/aero-cloud-practice-stack.ts
-test('SQS Queue Created', () => {
-//   const app = new cdk.App();
-//     // WHEN
-//   const stack = new AeroCloudPractice.AeroCloudPracticeStack(app, 'MyTestStack');
-//     // THEN
-//   const template = Template.fromStack(stack);
+describe("AeroCloudPracticeStack", () => {
+  const app = new cdk.App();
+  const stack = new AeroCloudPracticeStack(app, "TestStack");
 
-//   template.hasResourceProperties('AWS::SQS::Queue', {
-//     VisibilityTimeout: 300
-//   });
+  const template = Template.fromStack(stack);
+
+  test("creates an SQS queue", () => {
+    template.resourceCountIs("AWS::SQS::Queue", 2);
+  });
+
+  test("configures the flight queue with a dead letter queue", () => {
+    template.hasResourceProperties("AWS::SQS::Queue", {
+      VisibilityTimeout: 30,
+      RedrivePolicy: {
+        maxReceiveCount: 3,
+      },
+    });
+  });
+
+  test("creates the flight worker Lambda", () => {
+    template.hasResourceProperties("AWS::Lambda::Function", {
+      Runtime: "nodejs22.x",
+    });
+  });
+
+  test("creates the DLQ alarm", () => {
+    template.hasResourceProperties("AWS::CloudWatch::Alarm", {
+      Threshold: 1,
+      EvaluationPeriods: 1,
+    });
+  });
+
+  test("creates the API Gateway", () => {
+    template.resourceCountIs("AWS::ApiGateway::RestApi", 1);
+  });
 });
