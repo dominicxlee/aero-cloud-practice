@@ -29,4 +29,7 @@ jobs:
 
       - name: Synthesize CDK
         run: npx cdk synth
+        
+      - name: Check CDK diff
+        run: npx cdk diff
 
