@@ -8,6 +8,7 @@ import * as cloudwatchActions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
 import * as sqs from 'aws-cdk-lib/aws-sqs';
 import * as lambdaEventSources from 'aws-cdk-lib/aws-lambda-event-sources';
+import * as cloudwatch_actions from 'aws-cdk-lib/aws-cloudwatch-actions';
 
 export class AeroCloudPracticeStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -22,9 +23,17 @@ alarmTopic.addSubscription(
   new subscriptions.EmailSubscription('kaydenxlee@gmail.com')
 );
 
-const flightQueue = new sqs.Queue(this, 'FlightUpdateQueue', {
-  visibilityTimeout: cdk.Duration.seconds(30),
-});
+    const flightDLQ = new sqs.Queue(this, 'FlightUpdateDLQ', {
+      retentionPeriod: cdk.Duration.days(14),
+    });
+
+    const flightQueue = new sqs.Queue(this, 'FlightUpdateQueue', {
+      visibilityTimeout: cdk.Duration.seconds(30),
+      deadLetterQueue: {
+        queue: flightDLQ,
+        maxReceiveCount: 3,
+      },
+    });
 
     const flightFunction = new lambda.Function(this, 'FlightStatusFunction', {
       environment: {
@@ -117,9 +126,30 @@ const flightQueue = new sqs.Queue(this, 'FlightUpdateQueue', {
     treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
   }
 );
-flightFunctionErrorAlarm.addAlarmAction(
-  new cloudwatchActions.SnsAction(alarmTopic)
+
+const dlqAlarm = new cloudwatch.Alarm(this, 'FlightDLQAlarm', {
+  metric: flightDLQ.metricApproximateNumberOfMessagesVisible({
+    period: cdk.Duration.minutes(1),
+    statistic: 'Maximum',
+  }),
+  threshold: 1,
+  evaluationPeriods: 1,
+  datapointsToAlarm: 1,
+  treatMissingData: cloudwatch.TreatMissingData.NOT_BREACHING,
+  alarmDescription: 'Alerts when a flight update reaches the dead letter queue',
+});
+
+
+dlqAlarm.addAlarmAction(
+  new cloudwatch_actions.SnsAction(alarmTopic)
 );
+
+
+
+flightFunctionErrorAlarm.addAlarmAction(
+  new cloudwatch_actions.SnsAction(alarmTopic)
+);
+
 const api = new apigateway.LambdaRestApi(this, 'FlightStatusApi', {
   handler: flightFunction,
   proxy: false,
