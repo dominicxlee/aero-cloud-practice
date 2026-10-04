@@ -6,6 +6,8 @@ import * as sns from 'aws-cdk-lib/aws-sns';
 import * as subscriptions from 'aws-cdk-lib/aws-sns-subscriptions';
 import * as cloudwatchActions from 'aws-cdk-lib/aws-cloudwatch-actions';
 import * as apigateway from 'aws-cdk-lib/aws-apigateway';
+import * as sqs from 'aws-cdk-lib/aws-sqs';
+import * as lambdaEventSources from 'aws-cdk-lib/aws-lambda-event-sources';
 
 export class AeroCloudPracticeStack extends cdk.Stack {
   constructor(scope: Construct, id: string, props?: cdk.StackProps) {
@@ -20,22 +22,25 @@ alarmTopic.addSubscription(
   new subscriptions.EmailSubscription('kaydenxlee@gmail.com')
 );
 
+const flightQueue = new sqs.Queue(this, 'FlightUpdateQueue', {
+  visibilityTimeout: cdk.Duration.seconds(30),
+});
+
     const flightFunction = new lambda.Function(this, 'FlightStatusFunction', {
       environment: {
       SIMULATE_FAILURE: "false",
+      FLIGHT_QUEUE_URL: flightQueue.queueUrl,
       },
       description: 'Returns the current status of an airport flight for airport operations',
       runtime: lambda.Runtime.NODEJS_22_X,
       handler: 'index.handler',
       code: lambda.Code.fromInline(`
+  const { SQSClient, SendMessageCommand } = require("@aws-sdk/client-sqs");
+
+  const sqs = new SQSClient({});
+
   exports.handler = async (event) => {
     const flightNumber = event.pathParameters?.flightNumber || "unknown";
-
-    const simulateFailure = process.env.SIMULATE_FAILURE === "true";
-
-  if (simulateFailure) {
-    throw new Error("Simulated flight status lookup failure");
-  }
 
     console.log("Flight status lookup started", {
       flight: flightNumber
@@ -49,7 +54,15 @@ alarmTopic.addSubscription(
 
     const status = flightStatuses[flightNumber] || "Scheduled";
 
-    console.log("Flight status", {
+    await sqs.send(new SendMessageCommand({
+      QueueUrl: process.env.FLIGHT_QUEUE_URL,
+      MessageBody: JSON.stringify({
+        flight: flightNumber,
+        status
+      })
+    }));
+
+    console.log("Flight update queued", {
       flight: flightNumber,
       status
     });
@@ -64,7 +77,31 @@ alarmTopic.addSubscription(
   };
 `),
     });
-   
+    flightQueue.grantSendMessages(flightFunction);
+
+    const flightWorkerFunction = new lambda.Function(this, 'FlightWorkerFunction', {
+  runtime: lambda.Runtime.NODEJS_22_X,
+  handler: 'index.handler',
+  code: lambda.Code.fromInline(`
+    exports.handler = async (event) => {
+      console.log("Flight worker started");
+
+      for (const record of event.Records) {
+        const message = JSON.parse(record.body);
+
+        console.log("Processing flight update", {
+        flight: message.flight,
+        status: message.status
+      });
+      }
+
+      console.log("Flight worker finished");
+    };
+  `),
+});
+   flightWorkerFunction.addEventSource(
+  new lambdaEventSources.SqsEventSource(flightQueue)
+);
 
     const flightFunctionErrorAlarm = new cloudwatch.Alarm(
   this,
